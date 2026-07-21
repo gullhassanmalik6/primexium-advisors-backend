@@ -26,7 +26,7 @@ def upgrade() -> None:
         "marketing",
         "student",
         name="userrole",
-        create_type=True,
+        create_type=False,
     )
     user_role.create(op.get_bind(), checkfirst=True)
 
