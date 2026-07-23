@@ -202,11 +202,6 @@ def delete_account(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='Type DELETE to confirm account deletion',
         )
-    if not verify_password(payload.password, current_user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Password is incorrect",
-        )
 
     db.delete(current_user)
     db.commit()

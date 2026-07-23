@@ -6,7 +6,7 @@ services:
     healthCheckPath: /health
     envVars:
       - key: APP_NAME
-        value: Primexium Consultants API
+        value: Primexium Advisors API
       - key: DEBUG
         value: "false"
       - key: ENVIRONMENT
