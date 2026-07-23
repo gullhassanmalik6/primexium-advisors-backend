@@ -24,7 +24,13 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
 
-    cors_origins: str = "http://localhost:5173"
+    # Comma-separated. Override with CORS_ORIGINS env on Render.
+    cors_origins: str = (
+        "http://localhost:5173,"
+        "http://127.0.0.1:5173,"
+        "https://primexiumadvisors.com,"
+        "https://www.primexiumadvisors.com"
+    )
 
     cloudinary_cloud_name: str = ""
     cloudinary_api_key: str = ""
