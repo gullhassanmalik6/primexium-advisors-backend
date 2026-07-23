@@ -56,6 +56,11 @@ class ResetPasswordRequest(BaseModel):
     new_password: str = Field(min_length=8, max_length=128)
 
 
+class DeleteAccountRequest(BaseModel):
+    password: str = Field(min_length=1, max_length=128)
+    confirmation: str = Field(min_length=1, max_length=32)
+
+
 class ForgotPasswordResponse(BaseModel):
     message: str
     reset_url: str | None = None

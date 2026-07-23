@@ -24,6 +24,7 @@ from app.models.password_reset import (
 from app.models.user import User
 from app.schemas.auth import (
     ChangePasswordRequest,
+    DeleteAccountRequest,
     ForgotPasswordRequest,
     ForgotPasswordResponse,
     LoginRequest,
@@ -188,6 +189,28 @@ def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db))
     db.add(reset)
     db.commit()
     return MessageResponse(message="Password has been reset. You can now log in.")
+
+
+@router.delete("/account", response_model=MessageResponse)
+def delete_account(
+    payload: DeleteAccountRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> MessageResponse:
+    if payload.confirmation.strip().upper() != "DELETE":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Type DELETE to confirm account deletion',
+        )
+    if not verify_password(payload.password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password is incorrect",
+        )
+
+    db.delete(current_user)
+    db.commit()
+    return MessageResponse(message="Your account has been permanently deleted.")
 
 
 @router.get("/me", response_model=UserResponse)
