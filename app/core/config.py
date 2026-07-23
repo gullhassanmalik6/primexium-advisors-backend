@@ -36,9 +36,25 @@ class Settings(BaseSettings):
     cloudinary_api_key: str = ""
     cloudinary_api_secret: str = ""
 
+    # Frontend URL used in password-reset emails
+    frontend_url: str = "http://localhost:5173"
+    password_reset_expire_minutes: int = 60
+
+    # Optional SMTP — if unset, reset links are logged (and returned in DEBUG)
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = ""
+    smtp_use_tls: bool = True
+
     @property
     def cors_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def smtp_enabled(self) -> bool:
+        return bool(self.smtp_host and self.smtp_from_email)
 
 
 settings = Settings()

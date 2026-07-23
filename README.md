@@ -82,55 +82,63 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/primexium_db
 
 ## API overview
 
-Base path: /api/v1
+Base path: `/api/v1`
 
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | /auth/register | Create account |
 | POST | /auth/login | Get access + refresh tokens |
+| POST | /auth/refresh | Rotate access + refresh tokens |
+| POST | /auth/change-password | Change password (authenticated) |
 | GET | /auth/me | Current user (Bearer token) |
+| POST | /student/documents/upload | Upload document via Cloudinary |
 | GET | /health | Health check (root, not under /api/v1) |
 
 ## Project structure
 
-`
+```
 app/
   api/v1/          # Routers and endpoints
   auth/            # Auth dependencies
-  core/            # Settings and security
+  core/            # Settings, security, Cloudinary
   database/        # SQLAlchemy session
   models/          # ORM models
   schemas/         # Pydantic schemas
   main.py          # FastAPI app entry
 alembic/           # Migrations
+Dockerfile
+render.yaml
+railway.toml
+Procfile
 requirements.txt
-`
+```
 
 ## Database migrations
 
-`ash
+```bash
 # Apply migrations
 alembic upgrade head
 
 # Create a new migration after model changes
 alembic revision --autogenerate -m "describe change"
-`
+```
 
 ## Deploy (Render)
 
-1. Create a Web Service from this repository on Render.
-2. Runtime: Python
-3. Build command: pip install -r requirements.txt
-4. Start command:
+1. Create a Web Service from this repository on Render (Docker recommended).
+2. Docker uses the included `Dockerfile`, or Python start command:
+   `alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+3. Optional: use `render.yaml` Blueprint.
+4. Set env vars: `DATABASE_URL`, `SECRET_KEY`, `CORS_ORIGINS`, Cloudinary keys.
+5. Point `CORS_ORIGINS` at your Vercel frontend URL and production domain.
+6. Optionally map `api.primexiumadvisors.com` to the service.
 
-`ash
-uvicorn app.main:app --host 0.0.0.0 --port $PORT
-`
+## Deploy (Railway)
 
-5. Set environment variables on Render (DATABASE_URL, SECRET_KEY, CORS_ORIGINS, etc.).
-6. Point CORS_ORIGINS at your Vercel frontend URL (and later https://primexiumadvisors.com).
-7. Use Neon (or another hosted Postgres) for DATABASE_URL.
-8. Optionally map pi.primexiumadvisors.com to the Render service.
+1. Create a Railway project from this repo.
+2. Railway detects `railway.toml` + `Dockerfile`.
+3. Add Postgres and set `DATABASE_URL`, `SECRET_KEY`, `CORS_ORIGINS`, Cloudinary vars.
+4. Health check path: `/health`.
 
 ## Security notes
 
