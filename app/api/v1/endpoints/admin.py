@@ -38,9 +38,11 @@ from app.schemas.admin import (
     PaymentStatusUpdate,
     PaymentWithStudent,
     ReportSummary,
+    StudentDetailResponse,
     StudentListItem,
     StudentStatusUpdate,
 )
+from app.schemas.lead import LeadResponse
 from app.schemas.auth import UserResponse
 from app.schemas.student import (
     ApplicationResponse,
@@ -185,6 +187,118 @@ def list_students(
         item.applications_count = count
         items.append(item)
     return items
+
+
+@router.get("/students/{student_id}", response_model=StudentDetailResponse)
+def get_student_detail(
+    student_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(staff_required),
+) -> StudentDetailResponse:
+    student = _get_student(db, student_id)
+    applications_count = (
+        db.scalar(select(func.count()).select_from(Application).where(Application.student_id == student.id))
+        or 0
+    )
+    item = StudentListItem.model_validate(student)
+    item.applications_count = applications_count
+
+    applications = list(
+        db.scalars(
+            select(Application)
+            .where(Application.student_id == student.id)
+            .order_by(Application.created_at.desc())
+        ).all()
+    )
+    documents = list(
+        db.scalars(
+            select(Document).where(Document.student_id == student.id).order_by(Document.created_at.desc())
+        ).all()
+    )
+    payments = list(
+        db.scalars(
+            select(Payment).where(Payment.student_id == student.id).order_by(Payment.created_at.desc())
+        ).all()
+    )
+    appointments = list(
+        db.scalars(
+            select(Appointment)
+            .where(Appointment.student_id == student.id)
+            .order_by(Appointment.preferred_date.desc())
+        ).all()
+    )
+    messages = list(
+        db.scalars(
+            select(Message).where(Message.student_id == student.id).order_by(Message.created_at.desc()).limit(50)
+        ).all()
+    )
+
+    return StudentDetailResponse(
+        student=item,
+        applications=applications,
+        documents=documents,
+        payments=payments,
+        appointments=appointments,
+        messages=messages,
+    )
+
+
+@router.get("/crm/overview")
+def crm_overview(
+    db: Session = Depends(get_db),
+    _: User = Depends(staff_required),
+) -> dict:
+    stats = AdminDashboardStats(
+        leads_new=db.scalar(select(func.count()).select_from(Lead).where(Lead.status == LeadStatus.NEW)) or 0,
+        leads_total=db.scalar(select(func.count()).select_from(Lead)) or 0,
+        students_total=db.scalar(
+            select(func.count()).select_from(User).where(User.role == UserRole.STUDENT)
+        )
+        or 0,
+        applications_total=db.scalar(select(func.count()).select_from(Application)) or 0,
+        applications_active=db.scalar(
+            select(func.count())
+            .select_from(Application)
+            .where(
+                Application.status.notin_(
+                    [ApplicationStatus.COMPLETED, ApplicationStatus.REJECTED, ApplicationStatus.WITHDRAWN]
+                )
+            )
+        )
+        or 0,
+        documents_pending=db.scalar(
+            select(func.count())
+            .select_from(Document)
+            .where(Document.status.in_([DocumentStatus.PENDING, DocumentStatus.UNDER_REVIEW, DocumentStatus.UPLOADED]))
+        )
+        or 0,
+        payments_pending=db.scalar(
+            select(func.count()).select_from(Payment).where(Payment.status == PaymentStatus.PENDING)
+        )
+        or 0,
+        appointments_requested=db.scalar(
+            select(func.count())
+            .select_from(Appointment)
+            .where(Appointment.status == AppointmentStatus.REQUESTED)
+        )
+        or 0,
+        messages_unread_from_students=db.scalar(
+            select(func.count())
+            .select_from(Message)
+            .where(Message.is_from_student.is_(True), Message.status == MessageStatus.UNREAD)
+        )
+        or 0,
+    )
+    recent_leads = list(db.scalars(select(Lead).order_by(Lead.created_at.desc()).limit(8)).all())
+    leads_by_status = {
+        row[0].value: row[1]
+        for row in db.execute(select(Lead.status, func.count()).group_by(Lead.status)).all()
+    }
+    return {
+        "stats": stats,
+        "recent_leads": [LeadResponse.model_validate(lead) for lead in recent_leads],
+        "leads_by_status": leads_by_status,
+    }
 
 
 @router.patch("/students/{student_id}", response_model=UserResponse)

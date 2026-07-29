@@ -72,3 +72,12 @@ class LeadStatusUpdate(BaseModel):
 class LeadCreateResponse(BaseModel):
     id: UUID
     message: str
+
+
+class LeadConvertResponse(BaseModel):
+    lead: LeadResponse
+    student_id: UUID
+    student_email: EmailStr
+    temporary_password: str | None = None
+    created_new_student: bool
+    message: str

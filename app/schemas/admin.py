@@ -37,6 +37,15 @@ class StudentListItem(UserResponse):
     applications_count: int = 0
 
 
+class StudentDetailResponse(BaseModel):
+    student: StudentListItem
+    applications: list[ApplicationResponse]
+    documents: list[DocumentResponse]
+    payments: list[PaymentResponse]
+    appointments: list[AppointmentResponse]
+    messages: list[MessageResponse]
+
+
 class ApplicationStatusUpdate(BaseModel):
     status: ApplicationStatus
     notes: str | None = Field(default=None, max_length=5000)

@@ -1,10 +1,12 @@
 from uuid import UUID
+import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import require_roles
+from app.core.security import hash_password
 from app.database.session import get_db
 from app.models.lead import Lead, LeadStatus, LeadType
 from app.models.user import User, UserRole
@@ -12,6 +14,7 @@ from app.schemas.lead import (
     ConsultationLeadCreate,
     ContactLeadCreate,
     EligibilityLeadCreate,
+    LeadConvertResponse,
     LeadCreateResponse,
     LeadListResponse,
     LeadResponse,
@@ -160,3 +163,68 @@ def update_lead_status(
     db.commit()
     db.refresh(lead)
     return lead
+
+
+@router.post("/{lead_id}/convert", response_model=LeadConvertResponse)
+def convert_lead_to_student(
+    lead_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(*STAFF_ROLES)),
+) -> LeadConvertResponse:
+    lead = db.get(Lead, lead_id)
+    if lead is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+
+    email = lead.email.lower().strip()
+    existing = db.scalar(select(User).where(User.email == email))
+    temporary_password: str | None = None
+    created_new_student = False
+
+    if existing is not None:
+        if existing.role != UserRole.STUDENT:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This email belongs to a staff account and cannot be converted",
+            )
+        student = existing
+        student.is_active = True
+        if lead.phone and not student.phone:
+            student.phone = lead.phone
+        db.add(student)
+        message = "Lead linked to existing student account."
+    else:
+        parts = lead.full_name.strip().split(None, 1)
+        first_name = parts[0] if parts else "Student"
+        last_name = parts[1] if len(parts) > 1 else "Lead"
+        temporary_password = secrets.token_urlsafe(10)
+        student = User(
+            email=email,
+            hashed_password=hash_password(temporary_password),
+            first_name=first_name[:100],
+            last_name=last_name[:100],
+            phone=lead.phone,
+            role=UserRole.STUDENT,
+            is_active=True,
+        )
+        db.add(student)
+        created_new_student = True
+        message = "Student account created from lead. Share the temporary password securely."
+
+    lead.status = LeadStatus.CONVERTED
+    if lead.notes:
+        lead.notes = f"{lead.notes}\nConverted to student portal account."
+    else:
+        lead.notes = "Converted to student portal account."
+    db.add(lead)
+    db.commit()
+    db.refresh(lead)
+    db.refresh(student)
+
+    return LeadConvertResponse(
+        lead=LeadResponse.model_validate(lead),
+        student_id=student.id,
+        student_email=student.email,
+        temporary_password=temporary_password,
+        created_new_student=created_new_student,
+        message=message,
+    )
