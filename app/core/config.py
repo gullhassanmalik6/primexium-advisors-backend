@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     smtp_from_email: str = ""
     smtp_use_tls: bool = True
 
+    # Default admin seed (used by app.scripts.seed_admin)
+    admin_email: str = "admin@primexium.com"
+    admin_password: str = "Admin@12345"
+
     @property
     def cors_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]

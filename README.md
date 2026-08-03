@@ -113,6 +113,21 @@ Procfile
 requirements.txt
 ```
 
+## Seed admin user
+
+Create (or reset) the default admin from `.env`:
+
+```bash
+# In Backend/.env
+ADMIN_EMAIL=admin@primexium.com
+ADMIN_PASSWORD=Admin@12345
+
+python -m app.scripts.seed_admin
+# or: python scripts/seed_admin.py
+```
+
+Then open the frontend `/login`, sign in with those credentials, and you are redirected to `/admin/dashboard` based on `role=admin` (not by email hardcoding).
+
 ## Database migrations
 
 ```bash
