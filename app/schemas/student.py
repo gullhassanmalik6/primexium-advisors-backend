@@ -44,9 +44,92 @@ class ApplicationResponse(BaseModel):
     degree_level: str
     intake: str
     status: ApplicationStatus
-    notes: str | None
+    notes: str | None = None
+    student_note: str | None = None
+    next_action: str | None = None
+    next_action_due: date | None = None
+    missing_documents: str | None = None
+    stage_completed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class ApplicationHistoryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    application_id: UUID
+    from_status: str | None
+    to_status: str
+    changed_by_id: UUID | None
+    student_safe_note: str | None
+    next_action: str | None
+    next_action_due: date | None
+    created_at: datetime
+    changed_by_name: str | None = None
+
+
+class StudentApplicationTrackingResponse(BaseModel):
+    application: ApplicationResponse
+    history: list[ApplicationHistoryResponse]
+    visible_follow_ups: list["StudentFollowUpResponse"]
+
+
+class StudentFollowUpResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    follow_up_date: date
+    method: str
+    student_message: str | None
+    next_action: str | None
+    next_follow_up_date: date | None
+    related_status: str | None
+    created_at: datetime
+
+
+class FollowUpCreate(BaseModel):
+    student_id: UUID
+    application_id: UUID | None = None
+    follow_up_date: date
+    method: str = Field(default="phone", max_length=30)
+    summary: str = Field(min_length=2, max_length=5000)
+    next_action: str | None = Field(default=None, max_length=500)
+    next_follow_up_date: date | None = None
+    visible_to_student: bool = False
+    student_message: str | None = Field(default=None, max_length=5000)
+    related_status: str | None = Field(default=None, max_length=50)
+
+
+class FollowUpUpdate(BaseModel):
+    status: str | None = None
+    summary: str | None = Field(default=None, max_length=5000)
+    next_action: str | None = Field(default=None, max_length=500)
+    next_follow_up_date: date | None = None
+    visible_to_student: bool | None = None
+    student_message: str | None = Field(default=None, max_length=5000)
+
+
+class FollowUpResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    student_id: UUID
+    application_id: UUID | None
+    staff_id: UUID | None
+    follow_up_date: date
+    method: str
+    summary: str
+    next_action: str | None
+    next_follow_up_date: date | None
+    status: str
+    visible_to_student: bool
+    student_message: str | None
+    related_status: str | None
+    created_at: datetime
+    updated_at: datetime
+    student_name: str | None = None
+    student_email: str | None = None
 
 
 class DocumentCreate(BaseModel):

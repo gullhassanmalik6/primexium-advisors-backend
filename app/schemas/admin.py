@@ -49,6 +49,10 @@ class StudentDetailResponse(BaseModel):
 class ApplicationStatusUpdate(BaseModel):
     status: ApplicationStatus
     notes: str | None = Field(default=None, max_length=5000)
+    student_note: str | None = Field(default=None, max_length=5000)
+    next_action: str | None = Field(default=None, max_length=500)
+    next_action_due: date | None = None
+    missing_documents: str | None = Field(default=None, max_length=5000)
 
 
 class DocumentStatusUpdate(BaseModel):

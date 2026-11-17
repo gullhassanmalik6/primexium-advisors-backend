@@ -21,7 +21,7 @@ from app.models.password_reset import (
     generate_reset_token,
     hash_reset_token,
 )
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.schemas.auth import (
     ChangePasswordRequest,
     DeleteAccountRequest,
@@ -41,29 +41,64 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def register(payload: UserCreate, db: Session = Depends(get_db)) -> User:
-    existing = db.query(User).filter(User.email == payload.email).first()
+    from app.core.phone import normalize_phone
+    from sqlalchemy.exc import IntegrityError
+
+    email = payload.email.lower().strip()
+    existing = db.scalar(select(User).where(User.email == email))
     if existing:
         raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account with this email already exists. Please sign in or use Forgot Password.",
+        )
+
+    phone_normalized = normalize_phone(payload.phone)
+    if phone_normalized:
+        phone_match = db.scalar(
+            select(User).where(
+                User.phone_normalized == phone_normalized,
+                User.role == UserRole.STUDENT,
+            )
+        )
+        if phone_match:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="An account with this phone number already exists. Please sign in instead.",
+            )
+
+    if payload.referral_source == "other" and not payload.referral_detail:
+        raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered",
+            detail="Please specify your referral source when selecting Other.",
         )
 
     user = User(
-        email=payload.email,
+        email=email,
         hashed_password=hash_password(payload.password),
-        first_name=payload.first_name,
-        last_name=payload.last_name,
-        phone=payload.phone,
+        first_name=payload.first_name.strip(),
+        last_name=payload.last_name.strip(),
+        phone=payload.phone.strip() if payload.phone else None,
+        phone_normalized=phone_normalized,
+        referral_source=payload.referral_source,
+        referral_detail=payload.referral_detail,
+        role=UserRole.STUDENT,
     )
     db.add(user)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account with this email already exists. Please sign in or use Forgot Password.",
+        ) from exc
     db.refresh(user)
     return user
 
 
 @router.post("/login", response_model=TokenResponse)
 def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
-    user = db.query(User).filter(User.email == payload.email).first()
+    user = db.scalar(select(User).where(User.email == payload.email.lower().strip()))
     if user is None or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

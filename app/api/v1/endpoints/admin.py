@@ -12,10 +12,14 @@ from app.models.lead import Lead, LeadStatus, LeadType
 from app.models.student import (
     Application,
     ApplicationStatus,
+    ApplicationStatusHistory,
     Appointment,
     AppointmentStatus,
     Document,
     DocumentStatus,
+    FollowUp,
+    FollowUpMethod,
+    FollowUpStatus,
     Message,
     MessageStatus,
     Payment,
@@ -45,9 +49,13 @@ from app.schemas.admin import (
 from app.schemas.lead import LeadResponse
 from app.schemas.auth import UserResponse
 from app.schemas.student import (
+    ApplicationHistoryResponse,
     ApplicationResponse,
     AppointmentResponse,
     DocumentResponse,
+    FollowUpCreate,
+    FollowUpResponse,
+    FollowUpUpdate,
     MessageResponse,
     PaymentResponse,
 )
@@ -315,6 +323,18 @@ def update_student_status(
     return student
 
 
+@router.delete("/students/{student_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_student(
+    student_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(admin_required),
+) -> None:
+    """Permanently delete a student account and cascaded portal records."""
+    student = _get_student(db, student_id)
+    db.delete(student)
+    db.commit()
+
+
 @router.get("/applications", response_model=list[ApplicationWithStudent])
 def list_applications(
     db: Session = Depends(get_db),
@@ -343,17 +363,212 @@ def update_application(
     application_id: UUID,
     payload: ApplicationStatusUpdate,
     db: Session = Depends(get_db),
-    _: User = Depends(staff_required),
+    current_user: User = Depends(staff_required),
 ) -> Application:
     application = db.get(Application, application_id)
     if application is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Application not found")
+
+    previous_status = application.status.value if application.status else None
+    status_changed = application.status != payload.status
     application.status = payload.status
     if payload.notes is not None:
         application.notes = payload.notes
+    if payload.student_note is not None:
+        application.student_note = payload.student_note
+    if payload.next_action is not None:
+        application.next_action = payload.next_action
+    if payload.next_action_due is not None:
+        application.next_action_due = payload.next_action_due
+    if payload.missing_documents is not None:
+        application.missing_documents = payload.missing_documents
+    if status_changed:
+        application.stage_completed_at = datetime.now(UTC)
+        db.add(
+            ApplicationStatusHistory(
+                application_id=application.id,
+                from_status=previous_status,
+                to_status=payload.status.value,
+                changed_by_id=current_user.id,
+                student_safe_note=payload.student_note,
+                internal_note=payload.notes,
+                next_action=payload.next_action,
+                next_action_due=payload.next_action_due,
+            )
+        )
+
+    db.add(application)
     db.commit()
     db.refresh(application)
     return application
+
+
+@router.get("/applications/{application_id}/history", response_model=list[ApplicationHistoryResponse])
+def application_history(
+    application_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(staff_required),
+) -> list[ApplicationHistoryResponse]:
+    application = db.get(Application, application_id)
+    if application is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Application not found")
+    rows = list(
+        db.scalars(
+            select(ApplicationStatusHistory)
+            .where(ApplicationStatusHistory.application_id == application_id)
+            .order_by(ApplicationStatusHistory.created_at.desc())
+        ).all()
+    )
+    results: list[ApplicationHistoryResponse] = []
+    for row in rows:
+        staff_name = None
+        if row.changed_by_id:
+            staff = db.get(User, row.changed_by_id)
+            if staff:
+                staff_name = f"{staff.first_name} {staff.last_name}".strip()
+        item = ApplicationHistoryResponse.model_validate(row)
+        item.changed_by_name = staff_name
+        results.append(item)
+    return results
+
+
+@router.get("/follow-ups", response_model=list[FollowUpResponse])
+def list_follow_ups(
+    db: Session = Depends(get_db),
+    _: User = Depends(staff_required),
+    overdue_only: bool = Query(default=False),
+) -> list[FollowUpResponse]:
+    query = select(FollowUp).order_by(FollowUp.follow_up_date.asc())
+    rows = list(db.scalars(query).all())
+    today = datetime.now(UTC).date()
+    results: list[FollowUpResponse] = []
+    for row in rows:
+        if overdue_only and not (
+            row.status == FollowUpStatus.PENDING and row.follow_up_date < today
+        ):
+            continue
+        student = db.get(User, row.student_id)
+        item = FollowUpResponse(
+            id=row.id,
+            student_id=row.student_id,
+            application_id=row.application_id,
+            staff_id=row.staff_id,
+            follow_up_date=row.follow_up_date,
+            method=row.method.value if hasattr(row.method, "value") else str(row.method),
+            summary=row.summary,
+            next_action=row.next_action,
+            next_follow_up_date=row.next_follow_up_date,
+            status=row.status.value if hasattr(row.status, "value") else str(row.status),
+            visible_to_student=row.visible_to_student,
+            student_message=row.student_message,
+            related_status=row.related_status,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+            student_name=_student_name(student) if student else None,
+            student_email=student.email if student else None,
+        )
+        results.append(item)
+    return results
+
+
+@router.post("/follow-ups", response_model=FollowUpResponse, status_code=status.HTTP_201_CREATED)
+def create_follow_up(
+    payload: FollowUpCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(staff_required),
+) -> FollowUpResponse:
+    student = _get_student(db, payload.student_id)
+    try:
+        method = FollowUpMethod(payload.method)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid follow-up method") from exc
+
+    follow_up = FollowUp(
+        student_id=student.id,
+        application_id=payload.application_id,
+        staff_id=current_user.id,
+        follow_up_date=payload.follow_up_date,
+        method=method,
+        summary=payload.summary.strip(),
+        next_action=payload.next_action,
+        next_follow_up_date=payload.next_follow_up_date,
+        visible_to_student=payload.visible_to_student,
+        student_message=payload.student_message if payload.visible_to_student else None,
+        related_status=payload.related_status,
+        status=FollowUpStatus.PENDING,
+    )
+    db.add(follow_up)
+    db.commit()
+    db.refresh(follow_up)
+    return FollowUpResponse(
+        id=follow_up.id,
+        student_id=follow_up.student_id,
+        application_id=follow_up.application_id,
+        staff_id=follow_up.staff_id,
+        follow_up_date=follow_up.follow_up_date,
+        method=follow_up.method.value,
+        summary=follow_up.summary,
+        next_action=follow_up.next_action,
+        next_follow_up_date=follow_up.next_follow_up_date,
+        status=follow_up.status.value,
+        visible_to_student=follow_up.visible_to_student,
+        student_message=follow_up.student_message,
+        related_status=follow_up.related_status,
+        created_at=follow_up.created_at,
+        updated_at=follow_up.updated_at,
+        student_name=_student_name(student),
+        student_email=student.email,
+    )
+
+
+@router.patch("/follow-ups/{follow_up_id}", response_model=FollowUpResponse)
+def update_follow_up(
+    follow_up_id: UUID,
+    payload: FollowUpUpdate,
+    db: Session = Depends(get_db),
+    _: User = Depends(staff_required),
+) -> FollowUpResponse:
+    follow_up = db.get(FollowUp, follow_up_id)
+    if follow_up is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Follow-up not found")
+    if payload.status is not None:
+        try:
+            follow_up.status = FollowUpStatus(payload.status)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid follow-up status") from exc
+    if payload.summary is not None:
+        follow_up.summary = payload.summary
+    if payload.next_action is not None:
+        follow_up.next_action = payload.next_action
+    if payload.next_follow_up_date is not None:
+        follow_up.next_follow_up_date = payload.next_follow_up_date
+    if payload.visible_to_student is not None:
+        follow_up.visible_to_student = payload.visible_to_student
+    if payload.student_message is not None:
+        follow_up.student_message = payload.student_message
+    db.add(follow_up)
+    db.commit()
+    db.refresh(follow_up)
+    student = db.get(User, follow_up.student_id)
+    return FollowUpResponse(
+        id=follow_up.id,
+        student_id=follow_up.student_id,
+        application_id=follow_up.application_id,
+        staff_id=follow_up.staff_id,
+        follow_up_date=follow_up.follow_up_date,
+        method=follow_up.method.value,
+        summary=follow_up.summary,
+        next_action=follow_up.next_action,
+        next_follow_up_date=follow_up.next_follow_up_date,
+        status=follow_up.status.value,
+        visible_to_student=follow_up.visible_to_student,
+        student_message=follow_up.student_message,
+        related_status=follow_up.related_status,
+        created_at=follow_up.created_at,
+        updated_at=follow_up.updated_at,
+        student_name=_student_name(student) if student else None,
+        student_email=student.email if student else None,
+    )
 
 
 @router.get("/documents", response_model=list[DocumentWithStudent])

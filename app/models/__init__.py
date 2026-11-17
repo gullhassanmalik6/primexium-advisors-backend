@@ -1,10 +1,13 @@
 from app.models.content import ContentItem, ContentType
+from app.models.finance import FinanceCategory, FinanceEntry, FinanceEntryType, PaymentMethod
 from app.models.lead import Lead, LeadStatus, LeadType
 from app.models.password_reset import PasswordResetToken
 from app.models.student import (
     Application,
+    ApplicationStatusHistory,
     Appointment,
     Document,
+    FollowUp,
     Message,
     Payment,
 )
@@ -18,6 +21,8 @@ __all__ = [
     "LeadType",
     "LeadStatus",
     "Application",
+    "ApplicationStatusHistory",
+    "FollowUp",
     "Document",
     "Payment",
     "Appointment",
@@ -25,4 +30,8 @@ __all__ = [
     "PasswordResetToken",
     "ContentItem",
     "ContentType",
+    "FinanceEntry",
+    "FinanceEntryType",
+    "FinanceCategory",
+    "PaymentMethod",
 ]

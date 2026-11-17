@@ -11,11 +11,13 @@ from app.database.session import get_db
 from app.models.student import (
     Application,
     ApplicationStatus,
+    ApplicationStatusHistory,
     Appointment,
     AppointmentStatus,
     Document,
     DocumentStatus,
     DocumentType,
+    FollowUp,
     Message,
     MessageStatus,
     Payment,
@@ -25,6 +27,7 @@ from app.models.user import User, UserRole
 from app.schemas.auth import UserResponse
 from app.schemas.student import (
     ApplicationCreate,
+    ApplicationHistoryResponse,
     ApplicationResponse,
     ApplicationUpdate,
     AppointmentCreate,
@@ -36,6 +39,8 @@ from app.schemas.student import (
     MessageResponse,
     PaymentResponse,
     ProfileUpdate,
+    StudentApplicationTrackingResponse,
+    StudentFollowUpResponse,
 )
 
 router = APIRouter(prefix="/student", tags=["student"])
@@ -150,18 +155,25 @@ def update_profile(
     return current_user
 
 
+def _student_safe_application(application: Application) -> ApplicationResponse:
+    data = ApplicationResponse.model_validate(application)
+    data.notes = None  # Internal staff notes stay private
+    return data
+
+
 @router.get("/applications", response_model=list[ApplicationResponse])
 def list_applications(
     db: Session = Depends(get_db),
     current_user: User = Depends(student_only),
-) -> list[Application]:
-    return list(
+) -> list[ApplicationResponse]:
+    rows = list(
         db.scalars(
             select(Application)
             .where(Application.student_id == current_user.id)
             .order_by(Application.created_at.desc())
         ).all()
     )
+    return [_student_safe_application(row) for row in rows]
 
 
 @router.post("/applications", response_model=ApplicationResponse, status_code=status.HTTP_201_CREATED)
@@ -169,7 +181,7 @@ def create_application(
     payload: ApplicationCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(student_only),
-) -> Application:
+) -> ApplicationResponse:
     application = Application(
         student_id=current_user.id,
         university_name=payload.university_name.strip(),
@@ -178,12 +190,23 @@ def create_application(
         degree_level=payload.degree_level.strip(),
         intake=payload.intake.strip(),
         notes=payload.notes.strip() if payload.notes else None,
-        status=ApplicationStatus.SUBMITTED,
+        status=ApplicationStatus.REGISTRATION_RECEIVED,
+        student_note="Your application request has been received. Our team will review it shortly.",
     )
     db.add(application)
+    db.flush()
+    db.add(
+        ApplicationStatusHistory(
+            application_id=application.id,
+            from_status=None,
+            to_status=ApplicationStatus.REGISTRATION_RECEIVED.value,
+            changed_by_id=current_user.id,
+            student_safe_note=application.student_note,
+        )
+    )
     db.commit()
     db.refresh(application)
-    return application
+    return _student_safe_application(application)
 
 
 @router.get("/applications/{application_id}", response_model=ApplicationResponse)
@@ -191,8 +214,71 @@ def get_application(
     application_id: UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(student_only),
-) -> Application:
-    return _get_owned_application(db, application_id, current_user.id)
+) -> ApplicationResponse:
+    application = _get_owned_application(db, application_id, current_user.id)
+    return _student_safe_application(application)
+
+
+@router.get(
+    "/applications/{application_id}/tracking",
+    response_model=StudentApplicationTrackingResponse,
+)
+def get_application_tracking(
+    application_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(student_only),
+) -> StudentApplicationTrackingResponse:
+    application = _get_owned_application(db, application_id, current_user.id)
+    history_rows = list(
+        db.scalars(
+            select(ApplicationStatusHistory)
+            .where(ApplicationStatusHistory.application_id == application.id)
+            .order_by(ApplicationStatusHistory.created_at.asc())
+        ).all()
+    )
+    history: list[ApplicationHistoryResponse] = [
+        ApplicationHistoryResponse(
+            id=row.id,
+            application_id=row.application_id,
+            from_status=row.from_status,
+            to_status=row.to_status,
+            changed_by_id=None,
+            student_safe_note=row.student_safe_note,
+            next_action=row.next_action,
+            next_action_due=row.next_action_due,
+            created_at=row.created_at,
+            changed_by_name=None,
+        )
+        for row in history_rows
+    ]
+    follow_ups = list(
+        db.scalars(
+            select(FollowUp)
+            .where(
+                FollowUp.student_id == current_user.id,
+                FollowUp.visible_to_student.is_(True),
+                FollowUp.application_id == application.id,
+            )
+            .order_by(FollowUp.follow_up_date.desc())
+        ).all()
+    )
+    return StudentApplicationTrackingResponse(
+        application=_student_safe_application(application),
+        history=history,
+        visible_follow_ups=[
+            StudentFollowUpResponse(
+                id=item.id,
+                follow_up_date=item.follow_up_date,
+                method=item.method.value if hasattr(item.method, "value") else str(item.method),
+                student_message=item.student_message,
+                next_action=item.next_action,
+                next_follow_up_date=item.next_follow_up_date,
+                related_status=item.related_status,
+                created_at=item.created_at,
+            )
+            for item in follow_ups
+        ],
+    )
 
 
 @router.patch("/applications/{application_id}", response_model=ApplicationResponse)

@@ -28,7 +28,10 @@ class User(Base):
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     first_name: Mapped[str] = mapped_column(String(100), nullable=False)
     last_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    phone_normalized: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True)
+    referral_source: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    referral_detail: Mapped[str | None] = mapped_column(String(255), nullable=True)
     role: Mapped[UserRole] = mapped_column(
         Enum(
             UserRole,

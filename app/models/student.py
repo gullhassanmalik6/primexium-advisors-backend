@@ -11,13 +11,37 @@ from app.models.user import Base
 
 class ApplicationStatus(str, enum.Enum):
     DRAFT = "draft"
+    REGISTRATION_RECEIVED = "registration_received"
+    INITIAL_ASSESSMENT = "initial_assessment"
+    DOCUMENTS_PENDING = "documents_pending"
+    DOCUMENTS_UNDER_REVIEW = "documents_under_review"
+    UNIVERSITY_SELECTION = "university_selection"
+    APPLICATION_PREPARATION = "application_preparation"
     SUBMITTED = "submitted"
     UNDER_REVIEW = "under_review"
     OFFER_RECEIVED = "offer_received"
+    FURTHER_ACTION_REQUIRED = "further_action_required"
+    CAMPUS_FRANCE = "campus_france"
     VISA_STAGE = "visa_stage"
+    PRE_DEPARTURE = "pre_departure"
     COMPLETED = "completed"
+    ON_HOLD = "on_hold"
     REJECTED = "rejected"
     WITHDRAWN = "withdrawn"
+
+
+class FollowUpMethod(str, enum.Enum):
+    PHONE = "phone"
+    EMAIL = "email"
+    WHATSAPP = "whatsapp"
+    IN_PERSON = "in_person"
+    OTHER = "other"
+
+
+class FollowUpStatus(str, enum.Enum):
+    PENDING = "pending"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
 
 
 class DocumentType(str, enum.Enum):
@@ -84,6 +108,82 @@ class Application(Base):
         index=True,
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    student_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    next_action: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    next_action_due: Mapped[date | None] = mapped_column(Date, nullable=True)
+    missing_documents: Mapped[str | None] = mapped_column(Text, nullable=True)
+    stage_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+
+class ApplicationStatusHistory(Base):
+    __tablename__ = "application_status_history"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    application_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("applications.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    from_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    to_status: Mapped[str] = mapped_column(String(50), nullable=False)
+    changed_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    student_safe_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    internal_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    next_action: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    next_action_due: Mapped[date | None] = mapped_column(Date, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
+class FollowUp(Base):
+    __tablename__ = "follow_ups"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    student_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    application_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("applications.id", ondelete="SET NULL"), nullable=True
+    )
+    staff_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    follow_up_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    method: Mapped[FollowUpMethod] = mapped_column(
+        Enum(
+            FollowUpMethod,
+            name="followupmethod",
+            values_callable=lambda e: [i.value for i in e],
+        ),
+        default=FollowUpMethod.PHONE,
+        nullable=False,
+    )
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    next_action: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    next_follow_up_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    status: Mapped[FollowUpStatus] = mapped_column(
+        Enum(
+            FollowUpStatus,
+            name="followupstatus",
+            values_callable=lambda e: [i.value for i in e],
+        ),
+        default=FollowUpStatus.PENDING,
+        nullable=False,
+        index=True,
+    )
+    visible_to_student: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    student_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    related_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )
