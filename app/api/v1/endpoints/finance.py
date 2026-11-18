@@ -6,11 +6,18 @@ from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import require_roles
-from app.core.cloudinary_service import upload_document
+from app.core.file_storage import (
+    content_type_for_key,
+    delete_upload,
+    is_remote_url,
+    resolve_path,
+    upload_document,
+)
 from app.database.session import get_db
 from app.models.finance import FinanceCategory, FinanceEntry, FinanceEntryType, PaymentMethod
 from app.models.student import Payment, PaymentStatus
@@ -259,7 +266,7 @@ async def create_finance_entry_with_receipt(
             file.file,
             filename=file.filename,
             content_type=file.content_type,
-            folder=f"primexium/finance/{current_user.id}",
+            folder=f"finance/{current_user.id}",
         )
 
     entry = FinanceEntry(
@@ -294,16 +301,42 @@ async def upload_finance_attachment(
     if not file.filename:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A receipt file is required")
 
+    previous = entry.attachment_url
     entry.attachment_url = upload_document(
         file.file,
         filename=file.filename,
         content_type=file.content_type,
-        folder=f"primexium/finance/{current_user.id}",
+        folder=f"finance/{current_user.id}",
     )
+    delete_upload(previous)
     db.add(entry)
     db.commit()
     db.refresh(entry)
     return _to_response(entry, db)
+
+
+@router.get("/entries/{entry_id}/file")
+def download_finance_attachment(
+    entry_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(staff_required),
+) -> FileResponse:
+    entry = db.get(FinanceEntry, entry_id)
+    if entry is None or not entry.is_active or not entry.attachment_url:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Receipt not found")
+    if is_remote_url(entry.attachment_url):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This receipt is an external URL; open attachment_url directly",
+        )
+    path = resolve_path(entry.attachment_url)
+    if not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Receipt file missing on server")
+    return FileResponse(
+        path,
+        media_type=content_type_for_key(entry.attachment_url),
+        filename=path.name,
+    )
 
 
 @router.delete("/entries/{entry_id}/attachment", response_model=FinanceEntryResponse)
@@ -315,6 +348,7 @@ def remove_finance_attachment(
     entry = db.get(FinanceEntry, entry_id)
     if entry is None or not entry.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Finance entry not found")
+    delete_upload(entry.attachment_url)
     entry.attachment_url = None
     db.add(entry)
     db.commit()

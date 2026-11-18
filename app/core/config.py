@@ -32,6 +32,10 @@ class Settings(BaseSettings):
         "https://www.primexiumadvisors.com"
     )
 
+    # Local uploads (Railway Volume mount path, e.g. /data/uploads)
+    upload_dir: str = "uploads"
+
+    # Legacy optional Cloudinary (unused — files are stored on Railway disk)
     cloudinary_cloud_name: str = ""
     cloudinary_api_key: str = ""
     cloudinary_api_secret: str = ""

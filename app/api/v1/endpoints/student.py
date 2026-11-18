@@ -2,11 +2,18 @@ from datetime import date
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import require_roles
-from app.core.cloudinary_service import upload_document
+from app.core.file_storage import (
+    content_type_for_key,
+    delete_upload,
+    is_remote_url,
+    resolve_path,
+    upload_document,
+)
 from app.database.session import get_db
 from app.models.student import (
     Application,
@@ -360,7 +367,7 @@ async def upload_student_document(
         file.file,
         filename=file.filename or "document",
         content_type=file.content_type,
-        folder=f"primexium/documents/{current_user.id}",
+        folder=f"documents/{current_user.id}",
     )
 
     document = Document(
@@ -378,6 +385,30 @@ async def upload_student_document(
     return document
 
 
+@router.get("/documents/{document_id}/file")
+def download_student_document(
+    document_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(student_only),
+) -> FileResponse:
+    document = db.get(Document, document_id)
+    if document is None or document.student_id != current_user.id or not document.file_url:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document file not found")
+    if is_remote_url(document.file_url):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This document is an external URL; open file_url directly",
+        )
+    path = resolve_path(document.file_url)
+    if not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document file missing on server")
+    return FileResponse(
+        path,
+        media_type=content_type_for_key(document.file_url),
+        filename=path.name,
+    )
+
+
 @router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_document(
     document_id: UUID,
@@ -387,6 +418,7 @@ def delete_document(
     document = db.get(Document, document_id)
     if document is None or document.student_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    delete_upload(document.file_url)
     db.delete(document)
     db.commit()
 

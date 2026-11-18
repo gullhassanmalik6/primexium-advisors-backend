@@ -2,10 +2,12 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import require_roles
+from app.core.file_storage import content_type_for_key, is_remote_url, resolve_path
 from app.core.security import hash_password
 from app.database.session import get_db
 from app.models.lead import Lead, LeadStatus, LeadType
@@ -608,6 +610,30 @@ def update_document(
     db.commit()
     db.refresh(document)
     return document
+
+
+@router.get("/documents/{document_id}/file")
+def download_admin_document(
+    document_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(staff_required),
+) -> FileResponse:
+    document = db.get(Document, document_id)
+    if document is None or not document.file_url:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document file not found")
+    if is_remote_url(document.file_url):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This document is an external URL; open file_url directly",
+        )
+    path = resolve_path(document.file_url)
+    if not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document file missing on server")
+    return FileResponse(
+        path,
+        media_type=content_type_for_key(document.file_url),
+        filename=path.name,
+    )
 
 
 @router.get("/payments", response_model=list[PaymentWithStudent])

@@ -15,7 +15,7 @@ Official FastAPI backend for the Primexium Advisors website and student manageme
 | Pydantic / pydantic-settings | Validation and config |
 | PostgreSQL | Database |
 | python-jose + passlib | JWT auth and password hashing |
-| Cloudinary | Media uploads (optional) |
+| Railway Volume | Persistent local disk for receipts and documents |
 
 ## Features
 
@@ -72,7 +72,7 @@ Copy .env.example to .env (never commit .env):
 | ACCESS_TOKEN_EXPIRE_MINUTES | Access token lifetime |
 | REFRESH_TOKEN_EXPIRE_DAYS | Refresh token lifetime |
 | CORS_ORIGINS | Comma-separated allowed origins |
-| CLOUDINARY_* | Optional image upload credentials |
+| UPLOAD_DIR | Local upload folder (use a Railway Volume path in production, e.g. `/data/uploads`) |
 
 Example local DATABASE_URL:
 
@@ -91,7 +91,9 @@ Base path: `/api/v1`
 | POST | /auth/refresh | Rotate access + refresh tokens |
 | POST | /auth/change-password | Change password (authenticated) |
 | GET | /auth/me | Current user (Bearer token) |
-| POST | /student/documents/upload | Upload document via Cloudinary |
+| POST | /student/documents/upload | Upload document to Railway disk |
+| GET | /student/documents/{id}/file | Download own document (auth) |
+| GET | /admin/finance/entries/{id}/file | Download finance receipt (staff) |
 | GET | /health | Health check (root, not under /api/v1) |
 
 ## Project structure
@@ -152,8 +154,11 @@ alembic revision --autogenerate -m "describe change"
 
 1. Create a Railway project from this repo.
 2. Railway detects `railway.toml` + `Dockerfile`.
-3. Add Postgres and set `DATABASE_URL`, `SECRET_KEY`, `CORS_ORIGINS`, Cloudinary vars.
-4. Health check path: `/health`.
+3. Add Postgres and set `DATABASE_URL`, `SECRET_KEY`, `CORS_ORIGINS`.
+4. Add a **Volume** on the backend service, mount path `/data`, then set `UPLOAD_DIR=/data/uploads`.
+5. Health check path: `/health`.
+
+Receipts and student documents are stored on that volume (not Cloudinary). Without the volume, uploaded files are lost on redeploy.
 
 ## Security notes
 

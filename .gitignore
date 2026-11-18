@@ -34,3 +34,6 @@ Thumbs.db
 
 # Alembic local
 alembic/versions/*.pyc
+
+# Local / Railway volume uploads
+uploads/
