@@ -5,13 +5,14 @@ from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import require_roles
+from app.core.cloudinary_service import upload_document
 from app.database.session import get_db
-from app.models.finance import FinanceCategory, FinanceEntry, FinanceEntryType
+from app.models.finance import FinanceCategory, FinanceEntry, FinanceEntryType, PaymentMethod
 from app.models.student import Payment, PaymentStatus
 from app.models.user import User, UserRole
 from app.schemas.finance import (
@@ -233,6 +234,94 @@ def create_finance_entry(
     return _to_response(entry, db)
 
 
+@router.post("/entries/upload", response_model=FinanceEntryResponse, status_code=status.HTTP_201_CREATED)
+async def create_finance_entry_with_receipt(
+    entry_date: date = Form(...),
+    type: FinanceEntryType = Form(...),
+    category: FinanceCategory = Form(...),
+    title: str = Form(..., min_length=2, max_length=255),
+    amount: Decimal = Form(..., gt=0),
+    currency: str = Form(default="PKR"),
+    paid_by_name: str | None = Form(default=None),
+    payment_method: PaymentMethod = Form(default=PaymentMethod.CASH),
+    notes: str | None = Form(default=None),
+    file: UploadFile | None = File(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(finance_write_required),
+) -> FinanceEntryResponse:
+    cleaned_title = title.strip()
+    if not cleaned_title:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Title is required")
+
+    attachment_url: str | None = None
+    if file is not None and file.filename:
+        attachment_url = upload_document(
+            file.file,
+            filename=file.filename,
+            content_type=file.content_type,
+            folder=f"primexium/finance/{current_user.id}",
+        )
+
+    entry = FinanceEntry(
+        entry_date=entry_date,
+        type=type,
+        category=category,
+        title=cleaned_title,
+        amount=amount,
+        currency=(currency or "PKR").strip().upper() or "PKR",
+        paid_by_name=paid_by_name.strip() if paid_by_name and paid_by_name.strip() else None,
+        payment_method=payment_method,
+        notes=notes.strip() if notes and notes.strip() else None,
+        attachment_url=attachment_url,
+        created_by_id=current_user.id,
+    )
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return _to_response(entry, db)
+
+
+@router.post("/entries/{entry_id}/attachment", response_model=FinanceEntryResponse)
+async def upload_finance_attachment(
+    entry_id: UUID,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(finance_write_required),
+) -> FinanceEntryResponse:
+    entry = db.get(FinanceEntry, entry_id)
+    if entry is None or not entry.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Finance entry not found")
+    if not file.filename:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A receipt file is required")
+
+    entry.attachment_url = upload_document(
+        file.file,
+        filename=file.filename,
+        content_type=file.content_type,
+        folder=f"primexium/finance/{current_user.id}",
+    )
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return _to_response(entry, db)
+
+
+@router.delete("/entries/{entry_id}/attachment", response_model=FinanceEntryResponse)
+def remove_finance_attachment(
+    entry_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(finance_write_required),
+) -> FinanceEntryResponse:
+    entry = db.get(FinanceEntry, entry_id)
+    if entry is None or not entry.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Finance entry not found")
+    entry.attachment_url = None
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return _to_response(entry, db)
+
+
 @router.patch("/entries/{entry_id}", response_model=FinanceEntryResponse)
 def update_finance_entry(
     entry_id: UUID,
@@ -255,15 +344,16 @@ def update_finance_entry(
     return _to_response(entry, db)
 
 
-@router.delete("/entries/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/entries/{entry_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
 def delete_finance_entry(
     entry_id: UUID,
     db: Session = Depends(get_db),
     _: User = Depends(finance_write_required),
-) -> None:
+) -> Response:
     entry = db.get(FinanceEntry, entry_id)
     if entry is None or not entry.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Finance entry not found")
     entry.is_active = False
     db.add(entry)
     db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
